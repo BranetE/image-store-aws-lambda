@@ -16,26 +16,33 @@ import software.amazon.awssdk.services.rekognition.model.*;
 
 import java.util.Map;
 
+import static java.util.Objects.isNull;
+
 
 public class UploadImageHandler implements RequestHandler<S3Event, String> {
 
     private static final Logger logger = LoggerFactory.getLogger(UploadImageHandler.class);
 
     private final Region REGION = Region.EU_CENTRAL_1;
-
-    private final RekognitionClient rekognitionClient = RekognitionClient.builder().region(REGION).build();
-    private final DynamoDbClient dynamoDbClient = DynamoDbClient.builder().region(REGION).build();
-
     private final String TABLE_NAME = System.getenv("DYNAMODB_TABLE_NAME");
+
+    private final RekognitionClient rekognitionClient;
+    private final DynamoDbClient dynamoDbClient;
+
+    public UploadImageHandler() {
+        rekognitionClient = RekognitionClient.builder().region(REGION).build();
+        dynamoDbClient = DynamoDbClient.builder().region(REGION).build();
+    }
 
     @Override
     public String handleRequest(S3Event s3Event, Context context) {
-        if (s3Event == null || s3Event.getRecords() == null || s3Event.getRecords().isEmpty()) {
+        logger.info("Received event: {}", s3Event.toString());
+        if (isNull(s3Event) || isNull(s3Event.getRecords()) || s3Event.getRecords().isEmpty()) {
             logger.warn("Received empty or null S3 event");
             return "No records to process";
         }
 
-        if (TABLE_NAME == null || TABLE_NAME.isEmpty()) {
+        if (isNull(TABLE_NAME) || TABLE_NAME.isEmpty()) {
             logger.error("DYNAMODB_TABLE_NAME environment variable is not set");
             throw new IllegalStateException("Missing required environment variable: DYNAMODB_TABLE_NAME");
         }
@@ -68,9 +75,8 @@ public class UploadImageHandler implements RequestHandler<S3Event, String> {
             DetectLabelsResponse recognitionLabelsResponse = detectLabels(srcBucket, srcKey);
             logger.info("Detected {} labels for image: {}", recognitionLabelsResponse.labels().size(), srcKey);
 
-            PutItemResponse putLabelsResponse = putLabels(srcKey, recognitionLabelsResponse);
+            putLabels(srcKey, recognitionLabelsResponse);
             logger.info("Successfully stored labels for image: {}", srcKey);
-
         } catch (Exception e) {
             logger.error("Error processing record for key: {}", record.getS3().getObject().getKey(), e);
         }
@@ -83,12 +89,11 @@ public class UploadImageHandler implements RequestHandler<S3Event, String> {
 
     private DetectLabelsResponse detectLabels(String bucket, String key) {
         var detectLabelsRequest = DetectLabelsRequest.builder().image(Image.builder().s3Object(S3Object.builder().bucket(bucket).name(key).build()).build()).build();
-
         return rekognitionClient.detectLabels(detectLabelsRequest);
     }
 
 
-    private PutItemResponse putLabels(String key, DetectLabelsResponse response) {
+    private void putLabels(String key, DetectLabelsResponse response) {
         Map<String, AttributeValue> item = Map.of(
                 "imageId", AttributeValue.fromS(key),
                 "labels", AttributeValue.fromSs(
@@ -99,7 +104,7 @@ public class UploadImageHandler implements RequestHandler<S3Event, String> {
                 "timestamp", AttributeValue.fromN(String.valueOf(System.currentTimeMillis() / 1000))
         );
 
-        return dynamoDbClient.putItem(PutItemRequest.builder()
+        dynamoDbClient.putItem(PutItemRequest.builder()
                 .tableName(TABLE_NAME)
                 .item(item)
                 .build());

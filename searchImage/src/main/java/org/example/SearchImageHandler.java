@@ -40,7 +40,7 @@ public class SearchImageHandler implements RequestHandler<APIGatewayProxyRequest
 
     public SearchImageHandler() {
         this.s3Client = S3Client.builder().region(REGION).build();
-        this.dynamoDbClient = DynamoDbClient.builder().region(REGION).build();
+        this.dynamoDbClient = DynamoDbClient.builder().region(REGION).endpointDiscoveryEnabled(false).build();
         objectMapper = new ObjectMapper();
     }
 
@@ -82,7 +82,7 @@ public class SearchImageHandler implements RequestHandler<APIGatewayProxyRequest
     }
 
     private List<String> searchImagesByLabel(String query) {
-        List<String> matchingimageIds = new ArrayList<>();
+        List<String> imageIds = new ArrayList<>();
         logger.info("Searching query: {}", query);
         try {
             ScanRequest scanRequest = ScanRequest.builder()
@@ -102,7 +102,7 @@ public class SearchImageHandler implements RequestHandler<APIGatewayProxyRequest
                     if (hasMatchingLabel) {
                         AttributeValue primaryKeyAttribute = item.get("imageId");
                         if (nonNull(primaryKeyAttribute) && nonNull(primaryKeyAttribute.s())) {
-                            matchingimageIds.add(primaryKeyAttribute.s());
+                            imageIds.add(primaryKeyAttribute.s());
                         }
                     }
                 }
@@ -111,17 +111,17 @@ public class SearchImageHandler implements RequestHandler<APIGatewayProxyRequest
             throw new RuntimeException("Error scanning DynamoDB table: " + e.getMessage(), e);
         }
 
-        return matchingimageIds;
+        return imageIds;
     }
 
     private List<Image> loadImagesFromS3(List<String> imageNames) {
         return imageNames.stream()
-                .map(this::loadSingleImageFromS3)
+                .map(this::loadImageFromS3)
                 .filter(Objects::nonNull)
                 .toList();
     }
 
-    private Image loadSingleImageFromS3(String imageName) {
+    private Image loadImageFromS3(String imageName) {
         try {
             GetObjectRequest getObjectRequest = GetObjectRequest.builder()
                     .bucket(BUCKET_NAME)
@@ -138,7 +138,6 @@ public class SearchImageHandler implements RequestHandler<APIGatewayProxyRequest
             );
 
         } catch (Exception e) {
-            // Log error but continue with other images
             System.err.println("Error loading image " + imageName + ": " + e.getMessage());
             return null;
         }
